@@ -81,18 +81,24 @@ fn parse_header(buf: &[u8]) -> Header {
 }
 
 // Parse DNS query from byte buffer
-fn parse_query(buf: &[u8]) -> Query {
+fn parse_query(buf: &[u8]) -> Result<Query, Box<dyn Error>> {
     let qname = parse_qname(buf);
     let name_len = qname.len();
+
+    if buf.len() < name_len + 5 {
+        return Err("Buffer too short to contain valid query".into());
+    }
+
     let qtype = u16::from_be_bytes([buf[name_len + 1], buf[name_len + 2]]);
     let qclass = u16::from_be_bytes([buf[name_len + 3], buf[name_len + 4]]);
 
-    Query {
+    Ok(Query {
         qname,
         qtype,
         qclass,
-    }
+    })
 }
+
 
 // Parse the domain name (QNAME) from the byte buffer
 fn parse_qname(mut buf: &[u8]) -> String {
@@ -111,16 +117,25 @@ fn parse_qname(mut buf: &[u8]) -> String {
 }
 
 // Forward the query to another DNS server (e.g., 8.8.8.8)
+use tokio::time::{timeout, Duration};
+
 async fn forward_query(query: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let remote_dns_server = "8.8.8.8:53"; // Google's public DNS server
-    let socket = UdpSocket::bind("0.0.0.0:0").await?; // Bind to a random local port
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+
+    // Set timeout duration (e.g., 5 seconds)
+    let timeout_duration = Duration::from_secs(5);
 
     // Send the query to the remote DNS server
     socket.send_to(query, remote_dns_server).await?;
 
-    // Receive the response from the remote DNS server
+    // Set up timeout for receiving the response
     let mut response = vec![0u8; 512]; // Standard DNS response buffer
-    let _ = socket.recv_from(&mut response).await?;
+    let res = timeout(timeout_duration, socket.recv_from(&mut response)).await;
 
-    Ok(response)
+    match res {
+        Ok(Ok(_)) => Ok(response),
+        Ok(Err(e)) => Err(Box::new(e)),
+        Err(_) => Err("Timeout while waiting for response".into()), // Handle timeout
+    }
 }
