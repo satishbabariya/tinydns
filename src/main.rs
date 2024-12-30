@@ -15,6 +15,9 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
     let socket = UdpSocket::bind(addr).await?;
     println!("DNS Server is running on {}", addr);
 
+    // Reuse the same socket for forwarding requests
+    let remote_dns_server = "8.8.8.8:53"; // Google's public DNS server
+
     let mut buf = [0u8; 512]; // Standard DNS message size
     let mut shutdown_signal = signal(SignalKind::interrupt())?;
 
@@ -34,7 +37,7 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
                         let query = parse_query(&buf[12..len]);
                         println!("Received DNS Query: {:?}", query);
 
-                        let response = forward_query(&buf[0..len]).await?;
+                        let response = forward_query(&socket, remote_dns_server, &buf[0..len]).await?;
                         socket.send_to(&response, addr).await?;
                     }
                     Err(e) => {
@@ -99,7 +102,6 @@ fn parse_query(buf: &[u8]) -> Result<Query, Box<dyn Error>> {
     })
 }
 
-
 // Parse the domain name (QNAME) from the byte buffer
 fn parse_qname(mut buf: &[u8]) -> String {
     let mut qname = String::new();
@@ -119,12 +121,13 @@ fn parse_qname(mut buf: &[u8]) -> String {
 // Forward the query to another DNS server (e.g., 8.8.8.8)
 use tokio::time::{timeout, Duration};
 
-async fn forward_query(query: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-    let remote_dns_server = "8.8.8.8:53"; // Google's public DNS server
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
-
+async fn forward_query(
+    socket: &UdpSocket,
+    remote_dns_server: &str,
+    query: &[u8],
+) -> Result<Vec<u8>, Box<dyn Error>> {
     // Set timeout duration (e.g., 5 seconds)
-    let timeout_duration = Duration::from_secs(5);
+    let timeout_duration = Duration::from_secs(1);
 
     // Send the query to the remote DNS server
     socket.send_to(query, remote_dns_server).await?;
@@ -134,8 +137,8 @@ async fn forward_query(query: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let res = timeout(timeout_duration, socket.recv_from(&mut response)).await;
 
     match res {
-        Ok(Ok(_)) => Ok(response),
-        Ok(Err(e)) => Err(Box::new(e)),
+        Ok(Ok(_)) => Ok(response),      // Successfully received the response
+        Ok(Err(e)) => Err(Box::new(e)), // Error occurred while receiving
         Err(_) => Err("Timeout while waiting for response".into()), // Handle timeout
     }
 }
