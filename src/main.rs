@@ -10,10 +10,9 @@ mod dns {
 }
 
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let socket = UdpSocket::bind("0.0.0.0:5300").await?;
-    println!("DNS Server is running on port 5300");
+pub async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
+    let socket = UdpSocket::bind(addr).await?;
+    println!("DNS Server is running on {}", addr);
 
     let mut buf = [0u8; 512]; // Standard DNS message size
 
@@ -22,11 +21,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         // Parse DNS Request
         let header = parse_header(&buf);
-
         println!("Received DNS Header: {:?}", header);
 
         let query = parse_query(&buf[12..len]);
-
         println!("Received DNS Query: {:?}", query);
 
         // Forward the query to another DNS server (e.g., Google's DNS: 8.8.8.8)
@@ -37,18 +34,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    run_dns_server("0.0.0.0:5300").await
+}
+
 // Parse DNS header from byte buffer
 fn parse_header(buf: &[u8]) -> Header {
+    let id = u16::from_be_bytes([buf[0], buf[1]]);
+    let byte2 = buf[2];
+    let byte3 = buf[3];
+
     Header {
-        id: u16::from_be_bytes([buf[0], buf[1]]),
-        qr: (buf[2] >> 7) & 0x01 == 1,
-        opcode: (buf[2] >> 3) & 0x0F,
-        aa: (buf[2] >> 2) & 0x01 == 1,
-        tc: (buf[2] >> 1) & 0x01 == 1,
-        rd: buf[2] & 0x01 == 1,
-        ra: (buf[3] >> 7) & 0x01 == 1,
-        z: (buf[3] >> 4) & 0x07,
-        rcode: buf[3] & 0x0F,
+        id,
+        qr: (byte2 >> 7) & 0x01 == 1,
+        opcode: (byte2 >> 3) & 0x0F,
+        aa: (byte2 >> 2) & 0x01 == 1,
+        tc: (byte2 >> 1) & 0x01 == 1,
+        rd: byte2 & 0x01 == 1,
+        ra: (byte3 >> 7) & 0x01 == 1,
+        z: (byte3 >> 4) & 0x07,
+        rcode: byte3 & 0x0F,
         qdcount: u16::from_be_bytes([buf[4], buf[5]]),
         ancount: u16::from_be_bytes([buf[6], buf[7]]),
         nscount: u16::from_be_bytes([buf[8], buf[9]]),
@@ -56,17 +62,21 @@ fn parse_header(buf: &[u8]) -> Header {
     }
 }
 
+
 // Parse DNS query from byte buffer
 fn parse_query(buf: &[u8]) -> Query {
     let qname = parse_qname(buf);
-    let qtype = u16::from_be_bytes([buf[qname.len() + 1], buf[qname.len() + 2]]);
-    let qclass = u16::from_be_bytes([buf[qname.len() + 3], buf[qname.len() + 4]]);
+    let name_len = qname.len();
+    let qtype = u16::from_be_bytes([buf[name_len + 1], buf[name_len + 2]]);
+    let qclass = u16::from_be_bytes([buf[name_len + 3], buf[name_len + 4]]);
+
     Query {
         qname,
         qtype,
         qclass,
     }
 }
+
 
 // Parse the domain name (QNAME) from the byte buffer
 fn parse_qname(mut buf: &[u8]) -> String {
