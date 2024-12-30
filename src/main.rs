@@ -9,34 +9,48 @@ mod dns {
     pub mod query;
 }
 
+use tokio::signal::unix::{signal, SignalKind};
 
-pub async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
+async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
     let socket = UdpSocket::bind(addr).await?;
     println!("DNS Server is running on {}", addr);
 
     let mut buf = [0u8; 512]; // Standard DNS message size
+    let mut shutdown_signal = signal(SignalKind::interrupt())?;
 
     loop {
-        let (len, addr) = socket.recv_from(&mut buf).await?;
+        tokio::select! {
+            _ = shutdown_signal.recv() => {
+                println!("Shutdown signal received. Closing server...");
+                break;
+            }
+            result = socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((len, addr)) => {
+                        // Process request
+                        let header = parse_header(&buf);
+                        println!("Received DNS Header: {:?}", header);
 
-        // Parse DNS Request
-        let header = parse_header(&buf);
-        println!("Received DNS Header: {:?}", header);
+                        let query = parse_query(&buf[12..len]);
+                        println!("Received DNS Query: {:?}", query);
 
-        let query = parse_query(&buf[12..len]);
-        println!("Received DNS Query: {:?}", query);
-
-        // Forward the query to another DNS server (e.g., Google's DNS: 8.8.8.8)
-        let response = forward_query(&buf[0..len]).await?;
-
-        // Send DNS Response back to the client
-        socket.send_to(&response, addr).await?;
+                        let response = forward_query(&buf[0..len]).await?;
+                        socket.send_to(&response, addr).await?;
+                    }
+                    Err(e) => {
+                        eprintln!("Error receiving from socket: {}", e);
+                    }
+                }
+            }
+        }
     }
+
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let port = std::env::var("DNS_SERVER_PORT").unwrap_or_else(|_| "53".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
     let addr = format!("0.0.0.0:{}", port);
     run_dns_server(&addr).await
 }
@@ -64,7 +78,6 @@ fn parse_header(buf: &[u8]) -> Header {
     }
 }
 
-
 // Parse DNS query from byte buffer
 fn parse_query(buf: &[u8]) -> Query {
     let qname = parse_qname(buf);
@@ -78,7 +91,6 @@ fn parse_query(buf: &[u8]) -> Query {
         qclass,
     }
 }
-
 
 // Parse the domain name (QNAME) from the byte buffer
 fn parse_qname(mut buf: &[u8]) -> String {
