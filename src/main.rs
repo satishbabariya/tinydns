@@ -36,7 +36,9 @@ pub async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    run_dns_server("0.0.0.0:5300").await
+    let port = std::env::var("DNS_SERVER_PORT").unwrap_or_else(|_| "53".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    run_dns_server(&addr).await
 }
 
 // Parse DNS header from byte buffer
