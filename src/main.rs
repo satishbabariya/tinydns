@@ -50,6 +50,8 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    dotenv::dotenv().ok();
+
     let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
     let addr = format!("0.0.0.0:{}", port);
     run_dns_server(&addr).await
