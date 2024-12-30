@@ -1,5 +1,7 @@
 use std::error::Error;
 use tokio::net::UdpSocket;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::time::{timeout, Duration};
 
 use crate::dns::header::Header;
 use crate::dns::query::Query;
@@ -8,8 +10,6 @@ mod dns {
     pub mod header;
     pub mod query;
 }
-
-use tokio::signal::unix::{signal, SignalKind};
 
 async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
     let socket = UdpSocket::bind(addr).await?;
@@ -34,7 +34,7 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
                         let header = parse_header(&buf);
                         println!("Received DNS Header: {:?}", header);
 
-                        let query = parse_query(&buf[12..len]);
+                        let query = Query::parse(&buf[12..len]);
                         println!("Received DNS Query: {:?}", query);
 
                         let response = forward_query(&socket, remote_dns_server, &buf[0..len]).await?;
@@ -83,51 +83,14 @@ fn parse_header(buf: &[u8]) -> Header {
     }
 }
 
-// Parse DNS query from byte buffer
-fn parse_query(buf: &[u8]) -> Result<Query, Box<dyn Error>> {
-    let qname = parse_qname(buf);
-    let name_len = qname.len();
-
-    if buf.len() < name_len + 5 {
-        return Err("Buffer too short to contain valid query".into());
-    }
-
-    let qtype = u16::from_be_bytes([buf[name_len + 1], buf[name_len + 2]]);
-    let qclass = u16::from_be_bytes([buf[name_len + 3], buf[name_len + 4]]);
-
-    Ok(Query {
-        qname,
-        qtype,
-        qclass,
-    })
-}
-
-// Parse the domain name (QNAME) from the byte buffer
-fn parse_qname(mut buf: &[u8]) -> String {
-    let mut qname = String::new();
-    while !buf.is_empty() {
-        let len = buf[0] as usize;
-        if len == 0 {
-            break;
-        }
-        buf = &buf[1..];
-        qname.push_str(&String::from_utf8_lossy(&buf[..len]));
-        qname.push('.');
-        buf = &buf[len..];
-    }
-    qname.trim_end_matches('.').to_string()
-}
-
 // Forward the query to another DNS server (e.g., 8.8.8.8)
-use tokio::time::{timeout, Duration};
-
 async fn forward_query(
     socket: &UdpSocket,
     remote_dns_server: &str,
     query: &[u8],
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    // Set timeout duration (e.g., 5 seconds)
-    let timeout_duration = Duration::from_secs(1);
+    // Set timeout duration (e.g., 1 seconds)
+    let timeout_duration = Duration::from_secs(5);
 
     // Send the query to the remote DNS server
     socket.send_to(query, remote_dns_server).await?;
