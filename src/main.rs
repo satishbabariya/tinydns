@@ -1,16 +1,12 @@
-use std::error::Error;
+mod dns;
+
 use log::LevelFilter;
+use std::error::Error;
 use tokio::net::UdpSocket;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{timeout, Duration};
 
-use crate::dns::header::Header;
-use crate::dns::query::Query;
-
-mod dns {
-    pub mod header;
-    pub mod query;
-}
+use crate::dns::message::DNSMessage;
 
 async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
     let socket = UdpSocket::bind(addr).await?;
@@ -31,12 +27,8 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
             result = socket.recv_from(&mut buf) => {
                 match result {
                     Ok((len, addr)) => {
-                        // Process request
-                        // let header = parse_header(&buf);
-                        // println!("Received DNS Header: {:?}", header);
-
-                        let query = Query::parse(&buf[12..len]);
-                        println!("Received DNS Query: {:?}", query);
+                        let message = DNSMessage::parse(&buf[0..len]);
+                        println!("Received DNS Message: {:?}", message);
 
                         let response = forward_query(&socket, remote_dns_server, &buf[0..len]).await?;
                         socket.send_to(&response, addr).await?;
@@ -57,36 +49,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
 
     // Initialize logger
-    env_logger::builder()
-        .filter_level(LevelFilter::Info)
-        .init();
+    env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
     let addr = format!("0.0.0.0:{}", port);
     run_dns_server(&addr).await
-}
-
-// Parse DNS header from byte buffer
-fn parse_header(buf: &[u8]) -> Header {
-    let id = u16::from_be_bytes([buf[0], buf[1]]);
-    let byte2 = buf[2];
-    let byte3 = buf[3];
-
-    Header {
-        id,
-        qr: (byte2 >> 7) & 0x01 == 1,
-        opcode: (byte2 >> 3) & 0x0F,
-        aa: (byte2 >> 2) & 0x01 == 1,
-        tc: (byte2 >> 1) & 0x01 == 1,
-        rd: byte2 & 0x01 == 1,
-        ra: (byte3 >> 7) & 0x01 == 1,
-        z: (byte3 >> 4) & 0x07,
-        rcode: byte3 & 0x0F,
-        qdcount: u16::from_be_bytes([buf[4], buf[5]]),
-        ancount: u16::from_be_bytes([buf[6], buf[7]]),
-        nscount: u16::from_be_bytes([buf[8], buf[9]]),
-        arcount: u16::from_be_bytes([buf[10], buf[11]]),
-    }
 }
 
 // Forward the query to another DNS server (e.g., 8.8.8.8)

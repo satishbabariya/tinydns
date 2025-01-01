@@ -1,17 +1,14 @@
-#![allow(dead_code)]
-
-use log_execution_time::log_execution_time;
-use std::collections::HashMap;
-
 #[derive(Debug)]
-pub struct Query {
+pub struct ResourceRecord {
     pub name: String,
-    pub query_type: QueryType,
-    pub query_class: QueryClass, // Usually IN (Internet), but can be other values
+    pub record_type: RecordType,
+    pub class: RecordClass,
+    pub ttl: u32,
+    pub data_length: u16,
+    pub data: Vec<u8>,
 }
 
-impl Query {
-    #[log_execution_time]
+impl ResourceRecord {
     pub fn parse(query_buffer: &[u8]) -> Self {
         let mut index = 0;
 
@@ -33,31 +30,49 @@ impl Query {
         domain_name.pop(); // Remove the trailing dot
 
         // Parse the query type (next 2 bytes)
-        let query_type = QueryType::from_u16(u16::from_be_bytes([
+        let record_type = RecordType::from_u16(u16::from_be_bytes([
             query_buffer[index],
             query_buffer[index + 1],
         ]));
         index += 2;
 
         // Parse the query class (next 2 bytes)
-        let query_class = QueryClass::from_u16(u16::from_be_bytes([
+        let class = RecordClass::from_u16(u16::from_be_bytes([
             query_buffer[index],
             query_buffer[index + 1],
         ]));
+        index += 2;
 
-        // index += 2; // Not needed since we're at the end of the buffer
+        // Parse the TTL (next 4 bytes)
+        let ttl = u32::from_be_bytes([
+            query_buffer[index],
+            query_buffer[index + 1],
+            query_buffer[index + 2],
+            query_buffer[index + 3],
+        ]);
+        index += 4;
 
-        Query {
+        // Parse the data length (next 2 bytes)
+        let data_length = u16::from_be_bytes([query_buffer[index], query_buffer[index + 1]]);
+        index += 2;
+
+        // Parse the data
+        let data = query_buffer[index..index + data_length as usize].to_vec();
+
+        ResourceRecord {
             name: domain_name,
-            query_type,
-            query_class,
+            record_type,
+            class,
+            ttl,
+            data_length,
+            data,
         }
     }
 }
 
 #[repr(u16)]
 #[derive(Debug)]
-pub enum QueryClass {
+pub enum RecordClass {
     IN = 1,
     CH = 3,
     HS = 4,
@@ -67,22 +82,22 @@ pub enum QueryClass {
     Unknown = 0,
 }
 
-impl QueryClass {
+impl RecordClass {
     pub fn from_u16(value: u16) -> Self {
         match value {
-            1 => QueryClass::IN,
-            3 => QueryClass::CH,
-            4 => QueryClass::HS,
-            254 => QueryClass::NONE,
-            255 => QueryClass::ANY,
-            41 => QueryClass::OPT,
-            _ => QueryClass::Unknown,
+            1 => RecordClass::IN,
+            3 => RecordClass::CH,
+            4 => RecordClass::HS,
+            254 => RecordClass::NONE,
+            255 => RecordClass::ANY,
+            41 => RecordClass::OPT,
+            _ => RecordClass::Unknown,
         }
     }
 }
 
 #[derive(Debug)]
-pub enum QueryType {
+pub enum RecordType {
     A = 1,            // IPv4 Address
     NS = 2,           // Name Server
     MD = 3,           // Mail Destination (obsolete)
@@ -172,96 +187,96 @@ pub enum QueryType {
     Unknown = 0,      // Unknown query type
 }
 
-impl QueryType {
+impl RecordType {
     pub fn from_u16(value: u16) -> Self {
         match value {
-            1 => QueryType::A,
-            2 => QueryType::NS,
-            3 => QueryType::MD,
-            4 => QueryType::MF,
-            5 => QueryType::CNAME,
-            6 => QueryType::SOA,
-            7 => QueryType::MB,
-            8 => QueryType::MG,
-            9 => QueryType::MR,
-            10 => QueryType::Null,
-            12 => QueryType::PTR,
-            13 => QueryType::HINFO,
-            14 => QueryType::MINFO,
-            15 => QueryType::MX,
-            16 => QueryType::TXT,
-            17 => QueryType::RP,
-            18 => QueryType::AFSDB,
-            19 => QueryType::X25,
-            20 => QueryType::ISDN,
-            21 => QueryType::RT,
-            23 => QueryType::NSAPPTR,
-            24 => QueryType::SIG,
-            25 => QueryType::KEY,
-            26 => QueryType::PX,
-            27 => QueryType::GPOS,
-            28 => QueryType::AAAA,
-            29 => QueryType::LOC,
-            30 => QueryType::NXT,
-            31 => QueryType::EID,
-            32 => QueryType::NIMLOC,
-            33 => QueryType::SRV,
-            34 => QueryType::ATMA,
-            35 => QueryType::NAPTR,
-            36 => QueryType::KX,
-            37 => QueryType::CERT,
-            39 => QueryType::DNAME,
-            41 => QueryType::OPT,
-            42 => QueryType::APL,
-            43 => QueryType::DS,
-            44 => QueryType::SSHFP,
-            45 => QueryType::IPSECKEY,
-            46 => QueryType::RRSIG,
-            47 => QueryType::NSEC,
-            48 => QueryType::DNSKEY,
-            49 => QueryType::DHCID,
-            50 => QueryType::NSEC3,
-            51 => QueryType::NSEC3PARAM,
-            52 => QueryType::TLSA,
-            53 => QueryType::SMIMEA,
-            55 => QueryType::HIP,
-            56 => QueryType::NINFO,
-            57 => QueryType::RKEY,
-            58 => QueryType::TALINK,
-            59 => QueryType::CDS,
-            60 => QueryType::CDNSKEY,
-            61 => QueryType::OPENPGPKEY,
-            62 => QueryType::CSYNC,
-            63 => QueryType::ZONEMD,
-            64 => QueryType::SVCB,
-            65 => QueryType::HTTPS,
-            99 => QueryType::SPF,
-            100 => QueryType::UINFO,
-            101 => QueryType::UID,
-            102 => QueryType::GID,
-            103 => QueryType::UNSPEC,
-            104 => QueryType::NID,
-            105 => QueryType::L32,
-            106 => QueryType::L64,
-            107 => QueryType::LP,
-            108 => QueryType::EUI48,
-            109 => QueryType::EUI64,
-            128 => QueryType::NXNAME,
-            256 => QueryType::URI,
-            257 => QueryType::CAA,
-            258 => QueryType::AVC,
-            260 => QueryType::AMTRELAY,
-            249 => QueryType::TKEY,
-            250 => QueryType::TSIG,
-            251 => QueryType::IXFR,
-            252 => QueryType::AXFR,
-            253 => QueryType::MAILB,
-            254 => QueryType::MAILA,
-            255 => QueryType::ANY,
-            32768 => QueryType::TA,
-            32769 => QueryType::DLV,
-            65535 => QueryType::Reserved,
-            _ => QueryType::Unknown,
+            1 => RecordType::A,
+            2 => RecordType::NS,
+            3 => RecordType::MD,
+            4 => RecordType::MF,
+            5 => RecordType::CNAME,
+            6 => RecordType::SOA,
+            7 => RecordType::MB,
+            8 => RecordType::MG,
+            9 => RecordType::MR,
+            10 => RecordType::Null,
+            12 => RecordType::PTR,
+            13 => RecordType::HINFO,
+            14 => RecordType::MINFO,
+            15 => RecordType::MX,
+            16 => RecordType::TXT,
+            17 => RecordType::RP,
+            18 => RecordType::AFSDB,
+            19 => RecordType::X25,
+            20 => RecordType::ISDN,
+            21 => RecordType::RT,
+            23 => RecordType::NSAPPTR,
+            24 => RecordType::SIG,
+            25 => RecordType::KEY,
+            26 => RecordType::PX,
+            27 => RecordType::GPOS,
+            28 => RecordType::AAAA,
+            29 => RecordType::LOC,
+            30 => RecordType::NXT,
+            31 => RecordType::EID,
+            32 => RecordType::NIMLOC,
+            33 => RecordType::SRV,
+            34 => RecordType::ATMA,
+            35 => RecordType::NAPTR,
+            36 => RecordType::KX,
+            37 => RecordType::CERT,
+            39 => RecordType::DNAME,
+            41 => RecordType::OPT,
+            42 => RecordType::APL,
+            43 => RecordType::DS,
+            44 => RecordType::SSHFP,
+            45 => RecordType::IPSECKEY,
+            46 => RecordType::RRSIG,
+            47 => RecordType::NSEC,
+            48 => RecordType::DNSKEY,
+            49 => RecordType::DHCID,
+            50 => RecordType::NSEC3,
+            51 => RecordType::NSEC3PARAM,
+            52 => RecordType::TLSA,
+            53 => RecordType::SMIMEA,
+            55 => RecordType::HIP,
+            56 => RecordType::NINFO,
+            57 => RecordType::RKEY,
+            58 => RecordType::TALINK,
+            59 => RecordType::CDS,
+            60 => RecordType::CDNSKEY,
+            61 => RecordType::OPENPGPKEY,
+            62 => RecordType::CSYNC,
+            63 => RecordType::ZONEMD,
+            64 => RecordType::SVCB,
+            65 => RecordType::HTTPS,
+            99 => RecordType::SPF,
+            100 => RecordType::UINFO,
+            101 => RecordType::UID,
+            102 => RecordType::GID,
+            103 => RecordType::UNSPEC,
+            104 => RecordType::NID,
+            105 => RecordType::L32,
+            106 => RecordType::L64,
+            107 => RecordType::LP,
+            108 => RecordType::EUI48,
+            109 => RecordType::EUI64,
+            128 => RecordType::NXNAME,
+            256 => RecordType::URI,
+            257 => RecordType::CAA,
+            258 => RecordType::AVC,
+            260 => RecordType::AMTRELAY,
+            249 => RecordType::TKEY,
+            250 => RecordType::TSIG,
+            251 => RecordType::IXFR,
+            252 => RecordType::AXFR,
+            253 => RecordType::MAILB,
+            254 => RecordType::MAILA,
+            255 => RecordType::ANY,
+            32768 => RecordType::TA,
+            32769 => RecordType::DLV,
+            65535 => RecordType::Reserved,
+            _ => RecordType::Unknown,
         }
     }
 }
