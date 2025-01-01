@@ -1,13 +1,17 @@
 #![allow(dead_code)]
 
+use log_execution_time::log_execution_time;
+use std::collections::HashMap;
+
 #[derive(Debug)]
 pub struct Query {
     pub name: String,
     pub query_type: QueryType,
-    pub query_class: u16, // Usually IN (Internet), but can be other values
+    pub query_class: QueryClass, // Usually IN (Internet), but can be other values
 }
 
 impl Query {
+    #[log_execution_time]
     pub fn parse(query_buffer: &[u8]) -> Self {
         let mut index = 0;
 
@@ -36,7 +40,11 @@ impl Query {
         index += 2;
 
         // Parse the query class (next 2 bytes)
-        let query_class = u16::from_be_bytes([query_buffer[index], query_buffer[index + 1]]);
+        let query_class = QueryClass::from_u16(u16::from_be_bytes([
+            query_buffer[index],
+            query_buffer[index + 1],
+        ]));
+
         // index += 2; // Not needed since we're at the end of the buffer
 
         Query {
@@ -47,8 +55,33 @@ impl Query {
     }
 }
 
-#[derive(Debug)]
 #[repr(u16)]
+#[derive(Debug)]
+pub enum QueryClass {
+    IN = 1,
+    CH = 3,
+    HS = 4,
+    NONE = 254,
+    ANY = 255,
+    OPT = 41,
+    Unknown = 0,
+}
+
+impl QueryClass {
+    pub fn from_u16(value: u16) -> Self {
+        match value {
+            1 => QueryClass::IN,
+            3 => QueryClass::CH,
+            4 => QueryClass::HS,
+            254 => QueryClass::NONE,
+            255 => QueryClass::ANY,
+            41 => QueryClass::OPT,
+            _ => QueryClass::Unknown,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum QueryType {
     A = 1,            // IPv4 Address
     NS = 2,           // Name Server

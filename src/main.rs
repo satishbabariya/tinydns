@@ -1,4 +1,5 @@
 use std::error::Error;
+use log::LevelFilter;
 use tokio::net::UdpSocket;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{timeout, Duration};
@@ -31,8 +32,8 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
                 match result {
                     Ok((len, addr)) => {
                         // Process request
-                        let header = parse_header(&buf);
-                        println!("Received DNS Header: {:?}", header);
+                        // let header = parse_header(&buf);
+                        // println!("Received DNS Header: {:?}", header);
 
                         let query = Query::parse(&buf[12..len]);
                         println!("Received DNS Query: {:?}", query);
@@ -54,6 +55,11 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
+
+    // Initialize logger
+    env_logger::builder()
+        .filter_level(LevelFilter::Info)
+        .init();
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
     let addr = format!("0.0.0.0:{}", port);
