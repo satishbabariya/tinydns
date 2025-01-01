@@ -1,7 +1,9 @@
-use log_execution_time::log_execution_time;
 use super::header::Header;
 use super::question::Question;
 use super::resource_record::{RecordClass, RecordType, ResourceRecord};
+use log_execution_time::log_execution_time;
+use std::fmt;
+use std::io::ErrorKind;
 
 #[derive(Debug)]
 pub struct DNSMessage {
@@ -12,11 +14,17 @@ pub struct DNSMessage {
     // pub additional_records: Vec<ResourceRecord>,
 }
 
-impl DNSMessage {
+pub enum DNSParseError {
+    InvalidHeader,
+    InvalidQuestion,
+    InvalidResourceRecord,
+    BufferTooShort,
+}
 
+impl DNSMessage {
     #[log_execution_time]
-    pub fn parse(query_buffer: &[u8]) -> Self {
-        let header = Header::parse(query_buffer);
+    pub fn parse(query_buffer: &[u8]) -> Result<Self, DNSParseError> {
+        let header = Header::parse(query_buffer).map_err(|_| DNSParseError::InvalidHeader)?;
         let questions = Self::parse_questions(query_buffer, header.question_count);
 
         // let mut index = 12 + query_buffer[12..].len(); // Skip the header and questions
@@ -41,13 +49,13 @@ impl DNSMessage {
         //     index += 1; // Move to the next additional record
         // }
 
-        DNSMessage {
+        Ok(DNSMessage {
             header,
             questions,
             // answers,
             // authority_records,
             // additional_records,
-        }
+        })
     }
 
     fn parse_questions(query_buffer: &[u8], question_count: u16) -> Vec<Question> {
@@ -60,5 +68,16 @@ impl DNSMessage {
         }
         questions
     }
+}
 
+// Implement the Display trait for DNSParseError
+impl fmt::Display for DNSParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DNSParseError::InvalidHeader => write!(f, "Invalid DNS Header"),
+            DNSParseError::InvalidQuestion => write!(f, "Invalid DNS Question"),
+            DNSParseError::InvalidResourceRecord => write!(f, "Invalid DNS Resource Record"),
+            DNSParseError::BufferTooShort => write!(f, "Buffer is too short"),
+        }
+    }
 }

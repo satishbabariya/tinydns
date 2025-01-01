@@ -28,13 +28,10 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
             result = socket.recv_from(&mut buf) => {
                 match result {
                     Ok((len, addr)) => {
-                        // match DNSMessage::parse(&buf[0..len]) {
-                        //     Ok(message) => info!("Received DNS Message from {}: {:?}", addr, message),
-                        //     Err(e) => warn!("Failed to parse DNS message from {}: {}", addr, e),
-                        // }
-
-                        let message = DNSMessage::parse(&buf[0..len]);
-                        info!("Received DNS Message from {}: {:?}", addr, message);
+                        match DNSMessage::parse(&buf[0..len]) {
+                            Ok(message) => info!("Received DNS Message from {}: {:?}", addr, message),
+                            Err(e) => warn!("Failed to parse DNS message from {}: {}", addr, e),
+                        }
 
                         match forward_query(&socket, remote_dns_server, &buf[0..len]).await {
                             Ok(response) => {

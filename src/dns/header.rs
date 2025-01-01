@@ -16,6 +16,8 @@
 //     pub arcount: u16, // Number of additional records
 // }
 
+use crate::dns::message::DNSParseError;
+
 #[derive(Debug)]
 pub struct Header {
     pub transaction_id: u16,
@@ -39,31 +41,41 @@ pub struct Flags {
 }
 
 impl Header {
+    pub fn parse(buf: &[u8]) -> Result<Self, DNSParseError> {
+        // Ensure the buffer is at least 12 bytes
+        if buf.len() < 12 {
+            return Err(DNSParseError::BufferTooShort);
+        }
 
-    pub fn parse(buf: &[u8]) -> Self {
+        // Inline parsing for better performance
         let transaction_id = u16::from_be_bytes([buf[0], buf[1]]);
-        let flags = Flags {
-            qr: (buf[2] >> 7) & 0x01 == 1,
-            opcode: (buf[2] >> 3) & 0x0F,
-            aa: (buf[2] >> 2) & 0x01 == 1,
-            tc: (buf[2] >> 1) & 0x01 == 1,
-            rd: buf[2] & 0x01 == 1,
-            ra: (buf[3] >> 7) & 0x01 == 1,
-            z: (buf[3] >> 4) & 0x07,
-            rcode: buf[3] & 0x0F,
-        };
+        let flags_byte1 = buf[2];
+        let flags_byte2 = buf[3];
         let question_count = u16::from_be_bytes([buf[4], buf[5]]);
         let answer_count = u16::from_be_bytes([buf[6], buf[7]]);
         let authority_count = u16::from_be_bytes([buf[8], buf[9]]);
         let additional_count = u16::from_be_bytes([buf[10], buf[11]]);
 
-        Header {
+        // Parse flags
+        let flags = Flags {
+            qr: flags_byte1 & 0x80 != 0,
+            opcode: (flags_byte1 >> 3) & 0x0F,
+            aa: flags_byte1 & 0x04 != 0,
+            tc: flags_byte1 & 0x02 != 0,
+            rd: flags_byte1 & 0x01 != 0,
+            ra: flags_byte2 & 0x80 != 0,
+            z: (flags_byte2 >> 4) & 0x07,
+            rcode: flags_byte2 & 0x0F,
+        };
+
+        // Construct and return the header
+        Ok(Header {
             transaction_id,
             flags,
             question_count,
             answer_count,
             authority_count,
             additional_count,
-        }
+        })
     }
 }
