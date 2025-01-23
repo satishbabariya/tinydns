@@ -33,7 +33,7 @@ async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
                             Err(e) => warn!("Failed to parse DNS message from {}: {}", addr, e),
                         }
 
-                        match forward_query(&socket, remote_dns_server, &buf[0..len]).await {
+                        match forward_query(remote_dns_server, &buf[0..len]).await {
                             Ok(response) => {
                                 if let Err(e) = socket.send_to(&response, addr).await {
                                     error!("Error sending response to {}: {}", addr, e);
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
-    let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "5399".to_string());
     let addr = format!("0.0.0.0:{}", port);
 
     info!("tinydns v0.1.0");
@@ -70,23 +70,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 // Forward the query to another DNS server (e.g., 8.8.8.8)
 async fn forward_query(
-    socket: &UdpSocket,
     remote_dns_server: &str,
     query: &[u8],
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let timeout_duration = Duration::from_secs(5);
 
+    // Create a new socket for forwarding the query
+    let local_socket = UdpSocket::bind("0.0.0.0:0").await?;
+    local_socket.connect(remote_dns_server).await?;
+
     // Send the query to the remote DNS server
-    if let Err(e) = socket.send_to(query, remote_dns_server).await {
-        error!("Error sending query to remote DNS server: {}", e);
-        return Err(Box::new(e));
-    }
+    local_socket.send(query).await?;
 
     let mut response = vec![0u8; 512]; // Standard DNS response buffer
-    let res = timeout(timeout_duration, socket.recv_from(&mut response)).await;
+    let res = timeout(timeout_duration, local_socket.recv(&mut response)).await;
 
     match res {
-        Ok(Ok(_)) => Ok(response), // Successfully received the response
+        Ok(Ok(len)) => {
+            response.truncate(len);
+            Ok(response)
+        }
         Ok(Err(e)) => {
             error!("Error receiving response from remote server: {}", e);
             Err(Box::new(e))
@@ -97,3 +100,4 @@ async fn forward_query(
         }
     }
 }
+
