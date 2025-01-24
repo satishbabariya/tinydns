@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
-    let port = std::env::var("PORT").unwrap_or_else(|_| "5399".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
     let addr = format!("0.0.0.0:{}", port);
 
     info!("tinydns v0.1.0");
