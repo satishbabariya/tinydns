@@ -1,100 +1,103 @@
+mod dns;
+
+use log::LevelFilter;
+use log::{error, info, warn};
 use std::error::Error;
 use tokio::net::UdpSocket;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::time::{timeout, Duration};
 
-use crate::dns::header::Header;
-use crate::dns::query::Query;
+use crate::dns::message::DNSMessage;
 
-mod dns {
-    pub mod header;
-    pub mod query;
+async fn run_dns_server(addr: &str) -> Result<(), Box<dyn Error>> {
+    let socket = UdpSocket::bind(addr).await?;
+    info!("DNS Server is running on {}", addr);
+
+    // Reuse the same socket for forwarding requests
+    let remote_dns_server = "8.8.8.8:53"; // Google's public DNS server
+
+    let mut buf = [0u8; 512]; // Standard DNS message size
+    let mut shutdown_signal = signal(SignalKind::interrupt())?;
+
+    loop {
+        tokio::select! {
+            _ = shutdown_signal.recv() => {
+                info!("Shutdown signal received. Closing server...");
+                break;
+            }
+            result = socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((len, addr)) => {
+                        match DNSMessage::parse(&buf[0..len]) {
+                            Ok(message) => info!("Received DNS Message from {}: {:?}", addr, message),
+                            Err(e) => warn!("Failed to parse DNS message from {}: {}", addr, e),
+                        }
+
+                        match forward_query(remote_dns_server, &buf[0..len]).await {
+                            Ok(response) => {
+                                if let Err(e) = socket.send_to(&response, addr).await {
+                                    error!("Error sending response to {}: {}", addr, e);
+                                }
+                            }
+                            Err(e) => error!("Error forwarding query to remote server: {}", e),
+                        }
+                    }
+                    Err(e) => error!("Error receiving from socket: {}", e),
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let socket = UdpSocket::bind("0.0.0.0:5300").await?;
-    println!("DNS Server is running on port 5300");
+    dotenv::dotenv().ok();
 
-    let mut buf = [0u8; 512]; // Standard DNS message size
+    // Initialize logger
+    env_logger::builder().filter_level(LevelFilter::Info).init();
 
-    loop {
-        let (len, addr) = socket.recv_from(&mut buf).await?;
+    let port = std::env::var("PORT").unwrap_or_else(|_| "53".to_string());
+    let addr = format!("0.0.0.0:{}", port);
 
-        // Parse DNS Request
-        let header = parse_header(&buf);
-
-        println!("Received DNS Header: {:?}", header);
-
-        let query = parse_query(&buf[12..len]);
-
-        println!("Received DNS Query: {:?}", query);
-
-        // Forward the query to another DNS server (e.g., Google's DNS: 8.8.8.8)
-        let response = forward_query(&buf[0..len]).await?;
-
-        // Send DNS Response back to the client
-        socket.send_to(&response, addr).await?;
+    info!("tinydns v0.1.0");
+    if let Err(e) = run_dns_server(&addr).await {
+        error!("DNS server encountered an error: {}", e);
     }
-}
-
-// Parse DNS header from byte buffer
-fn parse_header(buf: &[u8]) -> Header {
-    Header {
-        id: u16::from_be_bytes([buf[0], buf[1]]),
-        qr: (buf[2] >> 7) & 0x01 == 1,
-        opcode: (buf[2] >> 3) & 0x0F,
-        aa: (buf[2] >> 2) & 0x01 == 1,
-        tc: (buf[2] >> 1) & 0x01 == 1,
-        rd: buf[2] & 0x01 == 1,
-        ra: (buf[3] >> 7) & 0x01 == 1,
-        z: (buf[3] >> 4) & 0x07,
-        rcode: buf[3] & 0x0F,
-        qdcount: u16::from_be_bytes([buf[4], buf[5]]),
-        ancount: u16::from_be_bytes([buf[6], buf[7]]),
-        nscount: u16::from_be_bytes([buf[8], buf[9]]),
-        arcount: u16::from_be_bytes([buf[10], buf[11]]),
-    }
-}
-
-// Parse DNS query from byte buffer
-fn parse_query(buf: &[u8]) -> Query {
-    let qname = parse_qname(buf);
-    let qtype = u16::from_be_bytes([buf[qname.len() + 1], buf[qname.len() + 2]]);
-    let qclass = u16::from_be_bytes([buf[qname.len() + 3], buf[qname.len() + 4]]);
-    Query {
-        qname,
-        qtype,
-        qclass,
-    }
-}
-
-// Parse the domain name (QNAME) from the byte buffer
-fn parse_qname(mut buf: &[u8]) -> String {
-    let mut qname = String::new();
-    while !buf.is_empty() {
-        let len = buf[0] as usize;
-        if len == 0 {
-            break;
-        }
-        buf = &buf[1..];
-        qname.push_str(&String::from_utf8_lossy(&buf[..len]));
-        qname.push('.');
-        buf = &buf[len..];
-    }
-    qname.trim_end_matches('.').to_string()
+    Ok(())
 }
 
 // Forward the query to another DNS server (e.g., 8.8.8.8)
-async fn forward_query(query: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-    let remote_dns_server = "8.8.8.8:53"; // Google's public DNS server
-    let socket = UdpSocket::bind("0.0.0.0:0").await?; // Bind to a random local port
+async fn forward_query(
+    remote_dns_server: &str,
+    query: &[u8],
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let timeout_duration = Duration::from_secs(5);
+
+    // Create a new socket for forwarding the query
+    let local_socket = UdpSocket::bind("0.0.0.0:0").await?;
+    local_socket.connect(remote_dns_server).await?;
 
     // Send the query to the remote DNS server
-    socket.send_to(query, remote_dns_server).await?;
+    local_socket.send(query).await?;
 
-    // Receive the response from the remote DNS server
     let mut response = vec![0u8; 512]; // Standard DNS response buffer
-    let _ = socket.recv_from(&mut response).await?;
+    let res = timeout(timeout_duration, local_socket.recv(&mut response)).await;
 
-    Ok(response)
+    match res {
+        Ok(Ok(len)) => {
+            response.truncate(len);
+            Ok(response)
+        }
+        Ok(Err(e)) => {
+            error!("Error receiving response from remote server: {}", e);
+            Err(Box::new(e))
+        }
+        Err(_) => {
+            warn!("Timeout while waiting for response from remote DNS server");
+            Err("Timeout while waiting for response".into())
+        }
+    }
 }
+
